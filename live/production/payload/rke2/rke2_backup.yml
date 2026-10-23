@@ -1,0 +1,72 @@
+---
+- name: "RKE2 - Backup etcd et credentials"
+  hosts: "{{ rke2_servers_group_name | default('masters') }}[0]"
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - "vars/{{ env | default('production') }}/variables.yaml"
+
+  tasks:
+    - name: Trouver le snapshot
+      ansible.builtin.find:
+        paths: "{{ rke2_etcd_snapshot_destination_dir }}"
+        patterns: "{{ rke2_etcd_snapshot_file ~ '*' if rke2_etcd_snapshot_file else '*' }}"
+        file_type: file
+      register: snapshot_files
+
+    - name: Vérifier qu'un snapshot existe
+      ansible.builtin.assert:
+        that: snapshot_files.matched > 0
+        fail_msg: "Aucun snapshot trouvé dans {{ rke2_etcd_snapshot_destination_dir }}"
+
+    - name: Sélectionner le snapshot le plus récent
+      ansible.builtin.set_fact:
+        snapshot_path: "{{ (snapshot_files.files | sort(attribute='mtime', reverse=true))[0].path }}"
+        snapshot_basename: "{{ (snapshot_files.files | sort(attribute='mtime', reverse=true))[0].path | basename }}"
+
+    - name: Créer les répertoires locaux
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+      loop:
+        - "{{ backup_snapshot_dir }}"
+        - "{{ backup_local_dir }}/certs-{{ ansible_date_time.date }}"
+
+    - name: Rapatrier le snapshot
+      ansible.builtin.fetch:
+        src: "{{ snapshot_path }}"
+        dest: "{{ backup_snapshot_dir }}/{{ snapshot_basename }}"
+        flat: true
+
+    - name: Archiver credentials et TLS
+      ansible.builtin.archive:
+        path:
+          - "{{ rke2_data_path }}/server/cred"
+          - "{{ rke2_data_path }}/server/tls"
+          - "{{ rke2_data_path }}/server/token"
+          - /etc/rancher/rke2/config.yaml
+        dest: /tmp/rke2-backup-creds.tar.gz
+        format: gz
+        mode: "0600"
+
+    - name: Rapatrier les credentials
+      ansible.builtin.fetch:
+        src: /tmp/rke2-backup-creds.tar.gz
+        dest: "{{ backup_local_dir }}/certs-{{ ansible_date_time.date }}/creds.tar.gz"
+        flat: true
+
+    - name: Nettoyer
+      ansible.builtin.file:
+        path: /tmp/rke2-backup-creds.tar.gz
+        state: absent
+
+    - name: Résumé
+      ansible.builtin.debug:
+        msg: |
+          Snapshot : {{ backup_snapshot_dir }}/{{ snapshot_basename }}
+          Credentials : {{ backup_local_dir }}/certs-{{ ansible_date_time.date }}/creds.tar.gz
+          Restaurer : make rke2-restore SNAPSHOT={{ snapshot_basename }}

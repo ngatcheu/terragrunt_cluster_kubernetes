@@ -1,0 +1,8 @@
+# Scripts exécutés sur Linux / Proxmox : fins de ligne LF obligatoires.
+*.sh     text eol=lf
+*.tftpl  text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.hcl    text eol=lf
+*.tf     text eol=lf
+Makefile text eol=lf

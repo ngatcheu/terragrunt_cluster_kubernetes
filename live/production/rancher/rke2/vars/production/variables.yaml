@@ -1,0 +1,10 @@
+---
+rke2_version: v1.34.6+rke2r1
+rke2_ha_mode: true
+rke2_ha_mode_keepalived: true
+rke2_api_ip: 192.168.1.130
+rke2_download_kubeconf: true
+rke2_download_kubeconf_path: ./
+rke2_download_kubeconf_file_name: kubeconfig.yaml
+rke2_cni: cilium
+rke2_ingress_controller: none

@@ -1,0 +1,8 @@
+---
+- name: Install Longhorn prerequisites on all nodes
+  hosts: k8s_cluster
+  become: true
+
+  tasks:
+    - ansible.builtin.import_role:
+        name: nsfabrice2009.config.ansible_role_longhorn_prereqs

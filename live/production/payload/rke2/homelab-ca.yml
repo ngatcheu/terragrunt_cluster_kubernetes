@@ -1,0 +1,32 @@
+---
+# Gestion du certificat CA homelab
+#
+# Usage :
+#   Export uniquement    : ansible-playbook homelab-ca.yml -i inventory-production.yml --tags export
+#   Distribution seule   : ansible-playbook homelab-ca.yml -i inventory-production.yml --tags distribute
+#   Export + distribution: ansible-playbook homelab-ca.yml -i inventory-production.yml
+
+- name: Exporter la CA depuis le cluster
+  hosts: masters[0]
+  become: true
+  gather_facts: false
+  tags: [export]
+
+  tasks:
+    - ansible.builtin.import_role:
+        name: nsfabrice2009.config.ansible_role_homelab_ca
+      vars:
+        homelab_ca_mode: export
+        homelab_ca_namespace: infra-certificates-cert-manager
+
+- name: Distribuer la CA sur tous les nodes
+  hosts: k8s_cluster
+  become: true
+  gather_facts: true
+  tags: [distribute]
+
+  tasks:
+    - ansible.builtin.import_role:
+        name: nsfabrice2009.config.ansible_role_homelab_ca
+      vars:
+        homelab_ca_mode: distribute

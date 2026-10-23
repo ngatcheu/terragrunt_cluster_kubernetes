@@ -1,0 +1,5 @@
+---
+collections:
+  - name: https://github.com/ngatcheu/ansible-collection.git#/nsfabrice2009
+    type: git
+    version: main

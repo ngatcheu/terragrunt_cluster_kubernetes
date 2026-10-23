@@ -1,0 +1,42 @@
+# === Terragrunt / Terraform ===
+.terragrunt-cache/
+.terragrunt-stack/
+# State local : contient des données sensibles, préférer le backend S3.
+.terragrunt-state/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+
+# Anciens fichiers de secrets Terraform (remplacés par .env / TF_VAR_*)
+*.tfvars
+*.tfvars.json
+*.auto.tfvars
+credentials.auto.tfvars
+secrets.auto.tfvars
+
+# === Ansible (dossiers live/<env>/<cluster>/rke2/) ===
+*.retry
+**/rke2/kubeconfig.yaml
+**/rke2/homelab-ca.crt
+**/rke2/homelab-ca.key
+**/rke2/backups/
+**/rke2/etcd_snapshots/
+
+# === Secrets ===
+# Aucun secret versionné : utiliser les variables TF_VAR_*.
+*.decrypted.*
+.env
+*.key
+*.pem
+
+# === OS / IDE ===
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

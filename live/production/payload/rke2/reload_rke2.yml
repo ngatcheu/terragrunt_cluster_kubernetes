@@ -1,0 +1,158 @@
+---
+- name: Redemarrer les services RKE2 sur le cluster
+  hosts: k8s_cluster
+  become: true
+  gather_facts: true
+  serial: 1
+  vars:
+    kubectl_path: /var/lib/rancher/rke2/bin
+    kubeconfig_path: /etc/rancher/rke2/rke2.yaml
+    drain_timeout: 300
+    grace_period: 30
+    node_ready_timeout: 300
+    pod_ready_timeout: 600
+    pod_ready_exclude_namespaces:
+      - platform-cicd-gitlab-system
+      - apps-automation-argo-workflows
+      - apps-automation-n8n
+  tasks:
+    - name: Inclure les variables
+      ansible.builtin.include_vars:
+        file: vars/{{ ENVIRONNEMENT }}/variables.yaml
+      when: ENVIRONNEMENT is defined
+
+    - name: "Redemarrage - Cordon du noeud (workers uniquement)"
+      ansible.builtin.command:
+        cmd: "{{ kubectl_path }}/kubectl --kubeconfig={{ kubeconfig_path }} cordon {{ inventory_hostname }}"
+      delegate_to: "{{ groups['masters'][0] }}"
+      when: inventory_hostname in groups['workers']
+      register: cordon_result
+      changed_when: "'cordoned' in cordon_result.stdout"
+
+    - name: "Redemarrage - Verification que le noeud est cordoned"
+      ansible.builtin.command:
+        cmd: "{{ kubectl_path }}/kubectl --kubeconfig={{ kubeconfig_path }} get node {{ inventory_hostname }} --no-headers"
+      delegate_to: "{{ groups['masters'][0] }}"
+      register: cordon_check
+      until: "'SchedulingDisabled' in cordon_check.stdout"
+      retries: 10
+      delay: 2
+      when: inventory_hostname in groups['workers']
+      changed_when: false
+
+    - name: "Redemarrage - Affichage du statut cordon"
+      ansible.builtin.debug:
+        msg: "Noeud {{ inventory_hostname }} cordoned avec succes - SchedulingDisabled"
+      when:
+        - inventory_hostname in groups['workers']
+        - cordon_check is succeeded
+
+    - name: "Redemarrage - Drain du noeud avec terminaison gracieuse (workers uniquement)"
+      ansible.builtin.command:
+        cmd: >-
+          {{ kubectl_path }}/kubectl --kubeconfig={{ kubeconfig_path }} drain {{ inventory_hostname }}
+          --ignore-daemonsets --delete-emptydir-data
+          --timeout={{ drain_timeout }}s --force=true
+          --grace-period={{ grace_period }}
+      delegate_to: "{{ groups['masters'][0] }}"
+      when: inventory_hostname in groups['workers']
+      register: drain_result
+      changed_when: "'drained' in drain_result.stdout"
+
+    - name: "Redemarrage - Verification du drain termine"
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail &&
+          {{ kubectl_path }}/kubectl --kubeconfig={{ kubeconfig_path }} get pods --all-namespaces
+          --field-selector=spec.nodeName={{ inventory_hostname }},status.phase=Running
+          -o custom-columns="NAME:.metadata.name,TYPE:.metadata.ownerReferences[0].kind" --no-headers |
+          grep -v -E "(DaemonSet|Node)" || true
+      delegate_to: "{{ groups['masters'][0] }}"
+      register: non_system_pods
+      until: non_system_pods.stdout | trim == ""
+      retries: "{{ (drain_timeout / 10) | int }}"
+      delay: 10
+      when: inventory_hostname in groups['workers']
+      changed_when: false
+
+    - name: "Redemarrage - Determination du nom du service RKE2"
+      ansible.builtin.set_fact:
+        rke2_service_name: "{{ 'rke2-server' if inventory_hostname in groups['masters'] else 'rke2-agent' }}"
+
+    - name: "Redemarrage - Arret du service RKE2"
+      ansible.builtin.systemd:
+        name: "{{ rke2_service_name }}"
+        state: stopped
+      register: service_stop
+
+    - name: "Redemarrage - Attente de l'arret complet du service"
+      ansible.builtin.wait_for:
+        timeout: 30
+
+    - name: "Redemarrage - Demarrage du service RKE2"
+      ansible.builtin.systemd:
+        name: "{{ rke2_service_name }}"
+        state: started
+      register: service_start
+
+    - name: "Redemarrage - Affichage du statut de redemarrage"
+      ansible.builtin.debug:
+        msg: "Service RKE2 {{ rke2_service_name }} redémarre avec succes sur {{ inventory_hostname }}"
+
+    - name: "Redemarrage - Attente que le noeud soit Ready"
+      ansible.builtin.command:
+        cmd: "{{ kubectl_path }}/kubectl --kubeconfig={{ kubeconfig_path }} get node {{ inventory_hostname }}"
+      delegate_to: "{{ groups['masters'][0] }}"
+      register: node_status
+      until: "'Ready' in node_status.stdout and 'NotReady' not in node_status.stdout"
+      retries: "{{ (node_ready_timeout / 10) | int }}"
+      delay: 10
+      changed_when: false
+
+    - name: "Redemarrage - Uncordon du noeud (workers uniquement)"
+      ansible.builtin.command:
+        cmd: "{{ kubectl_path }}/kubectl --kubeconfig={{ kubeconfig_path }} uncordon {{ inventory_hostname }}"
+      delegate_to: "{{ groups['masters'][0] }}"
+      when: inventory_hostname in groups['workers']
+      register: uncordon_result
+      changed_when: "'uncordoned' in uncordon_result.stdout"
+
+    - name: "Redemarrage - Verification que le noeud est uncordoned"
+      ansible.builtin.command:
+        cmd: "{{ kubectl_path }}/kubectl --kubeconfig={{ kubeconfig_path }} get node {{ inventory_hostname }} --no-headers"
+      delegate_to: "{{ groups['masters'][0] }}"
+      register: uncordon_check
+      until: "'SchedulingDisabled' not in uncordon_check.stdout"
+      retries: 10
+      delay: 2
+      when: inventory_hostname in groups['workers']
+      changed_when: false
+
+    - name: "Redemarrage - Affichage du statut uncordon"
+      ansible.builtin.debug:
+        msg: "Noeud {{ inventory_hostname }} uncordoned avec succes - Pret pour le scheduling"
+      when:
+        - inventory_hostname in groups['workers']
+        - uncordon_check is succeeded
+
+    - name: "Redemarrage - Attente que tous les pods soient Ready avant de passer au noeud suivant"
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail &&
+          {{ kubectl_path }}/kubectl --kubeconfig={{ kubeconfig_path }} get pods --all-namespaces
+          -o custom-columns="NS:.metadata.namespace,PHASE:.status.phase,READY:.status.conditions[?(@.type=='Ready')].status" --no-headers |
+          grep -v -E "^({{ pod_ready_exclude_namespaces | join('|') }})" |
+          grep -v -E "(Succeeded|Failed)" |
+          awk '$3 != "True"' | wc -l
+      delegate_to: "{{ groups['masters'][0] }}"
+      register: not_ready_pods_count
+      until: not_ready_pods_count.stdout | int == 0
+      retries: "{{ (pod_ready_timeout / 10) | int }}"
+      delay: 10
+      changed_when: false
+
+    - name: "Redemarrage - Affichage du statut de completion du redemarrage"
+      ansible.builtin.debug:
+        msg: |
+          Redemarrage du noeud {{ inventory_hostname }} termine avec succes !
+          Tous les pods actifs sont Ready - Passage au noeud suivant securise

@@ -1,0 +1,187 @@
+---
+# =============================================================================
+# Playbook: RKE2 Restore (s'appuie sur le rôle existant)
+# =============================================================================
+# Prépare le cluster puis utilise le rôle rke2 pour restaurer le snapshot etcd.
+#
+# Usage:
+#   ansible-playbook -i inventory playbook_restore_via_role.yml \
+#     -e "rke2_etcd_snapshot_file=mon-snapshot"
+#
+# Le fichier snapshot doit être placé dans etcd_snapshots/ (à côté du playbook)
+# ou dans le chemin défini par rke2_etcd_snapshot_source_dir.
+#
+# Options:
+#   -e "rke2_etcd_snapshot_file=nom-du-snapshot"   # (OBLIGATOIRE)
+# =============================================================================
+
+# =============================================================================
+# Phase 1 : Arrêter le cluster et préparer pour le restore
+# =============================================================================
+- name: "Restore - Phase 1 : Préparation du cluster"
+  hosts: "{{ rke2_cluster_group_name | default('k8s_cluster') }}"
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+
+  vars_files:
+    - "vars/{{ env | default('production') }}/variables.yaml"
+
+  tasks:
+    - name: Vérifier que rke2_etcd_snapshot_file est défini
+      ansible.builtin.assert:
+        that:
+          - rke2_etcd_snapshot_file is defined
+          - rke2_etcd_snapshot_file | length > 0
+        fail_msg: |
+          ❌ Variable 'rke2_etcd_snapshot_file' obligatoire !
+          Usage: ansible-playbook playbook_restore_via_role.yml -e "rke2_etcd_snapshot_file=mon-snapshot"
+      run_once: true
+
+    # ----- Arrêt des agents -----
+    - name: "🛑 Arrêter les agents RKE2"
+      ansible.builtin.systemd:
+        name: rke2-agent.service
+        state: stopped
+      when: inventory_hostname in groups[rke2_agents_group_name] | default([])
+      ignore_errors: true
+
+    # ----- Arrêt des servers secondaires -----
+    - name: "🛑 Arrêter les servers RKE2 (sauf le premier)"
+      ansible.builtin.systemd:
+        name: rke2-server.service
+        state: stopped
+      when:
+        - inventory_hostname in groups[rke2_servers_group_name]
+        - inventory_hostname != groups[rke2_servers_group_name].0
+      ignore_errors: true
+
+    # ----- Arrêt du premier server -----
+    - name: "🛑 Arrêter le premier server RKE2"
+      ansible.builtin.systemd:
+        name: rke2-server.service
+        state: stopped
+      when: inventory_hostname == groups[rke2_servers_group_name].0
+      ignore_errors: true
+
+    # ----- Arrêt Keepalived -----
+    - name: "🛑 Arrêter Keepalived sur tous les servers"
+      ansible.builtin.systemd:
+        name: keepalived
+        state: stopped
+      when: inventory_hostname in groups[rke2_servers_group_name]
+      ignore_errors: true
+
+    - name: Attendre l'arrêt complet des services
+      ansible.builtin.pause:
+        seconds: 10
+
+    # ----- Désactiver le service rke2-server sur le premier master -----
+    # C'est LA condition pour que le rôle déclenche le restore :
+    # (ansible_facts.services['rke2-server.service']['status'] == 'disabled')
+    - name: "🔧 Désactiver rke2-server sur le premier master (pour déclencher le restore du rôle)"
+      ansible.builtin.systemd:
+        name: rke2-server.service
+        enabled: false
+      when: inventory_hostname == groups[rke2_servers_group_name].0
+      ignore_errors: true
+
+    # ----- Nettoyage des servers secondaires -----
+    - name: "🧹 Supprimer les données etcd sur les autres servers"
+      ansible.builtin.file:
+        path: "{{ rke2_data_path }}/server/db"
+        state: absent
+      when:
+        - inventory_hostname in groups[rke2_servers_group_name]
+        - inventory_hostname != groups[rke2_servers_group_name].0
+
+    - name: "🧹 Supprimer les certificats TLS sur les autres servers"
+      ansible.builtin.file:
+        path: "{{ rke2_data_path }}/server/tls"
+        state: absent
+      when:
+        - inventory_hostname in groups[rke2_servers_group_name]
+        - inventory_hostname != groups[rke2_servers_group_name].0
+
+    # ----- Désactiver rke2 sur les servers secondaires -----
+    - name: "🔧 Désactiver rke2-server sur les autres servers"
+      ansible.builtin.systemd:
+        name: rke2-server.service
+        enabled: false
+      when:
+        - inventory_hostname in groups[rke2_servers_group_name]
+        - inventory_hostname != groups[rke2_servers_group_name].0
+      ignore_errors: true
+
+    # ----- Désactiver rke2 sur les agents -----
+    - name: "🔧 Désactiver rke2-agent sur les agents"
+      ansible.builtin.systemd:
+        name: rke2-agent.service
+        enabled: false
+      when: inventory_hostname in groups[rke2_agents_group_name] | default([])
+      ignore_errors: true
+
+    - name: "✅ Cluster préparé pour le restore via le rôle"
+      ansible.builtin.debug:
+        msg: |
+          Cluster arrêté et préparé.
+          Le rôle rke2 va maintenant :
+          1. Restaurer le snapshot {{ rke2_etcd_snapshot_file }}
+          2. Démarrer le premier server
+          3. Nettoyer les anciens nœuds
+          4. Rejoindre les autres nœuds
+      run_once: true
+
+# =============================================================================
+# Phase 2 : Exécuter le rôle rke2 (qui fait le restore + redémarrage)
+# =============================================================================
+- name: "Restore - Phase 2 : Exécution du rôle rke2"
+  hosts: "{{ rke2_cluster_group_name | default('k8s_cluster') }}"
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: rke2
+
+# =============================================================================
+# Phase 3 : Vérification finale
+# =============================================================================
+- name: "Restore - Phase 3 : Vérification"
+  hosts: "{{ rke2_servers_group_name | default('masters') }}[0]"
+  become: true
+  gather_facts: false
+
+  vars_files:
+    - "vars/{{ env | default('production') }}/variables.yaml"
+
+  tasks:
+    - name: Afficher l'état des nœuds
+      ansible.builtin.shell: |
+        {{ rke2_data_path }}/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml get nodes -o wide
+      args:
+        executable: /bin/bash
+      register: final_nodes
+      changed_when: false
+
+    - name: Afficher l'état des pods système
+      ansible.builtin.shell: |
+        {{ rke2_data_path }}/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml get pods -n kube-system
+      args:
+        executable: /bin/bash
+      register: final_pods
+      changed_when: false
+
+    - name: "📋 Résumé final de la restauration"
+      ansible.builtin.debug:
+        msg: |
+          ✅ ==========================================
+          ✅ RESTAURATION RKE2 TERMINÉE AVEC SUCCÈS
+          ✅ ==========================================
+
+          📌 Nœuds du cluster :
+          {{ final_nodes.stdout }}
+
+          📌 Pods système :
+          {{ final_pods.stdout }}
+
+          ==========================================

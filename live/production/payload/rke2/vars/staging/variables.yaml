@@ -1,0 +1,29 @@
+---
+rke2_version: v1.34.1+rke2r1
+rke2_ha_mode: true
+rke2_ha_mode_keepalived: true
+rke2_api_ip: 192.168.1.132
+rke2_download_kubeconf: true
+rke2_download_kubeconf_path: ./
+rke2_download_kubeconf_file_name: kubeconfig.yaml
+rke2_cni: cilium
+rke2_server_node_taints:
+ - 'CriticalAddonsOnly=true:NoExecute'
+# Configuration explicite des CIDRs pour éviter les conflits Calico/Canal
+rke2_cluster_cidr:
+  - 10.42.0.0/16
+rke2_service_cidr:
+  - 10.43.0.0/16
+
+# Cilium Helm values — active L2Announcements (LoadBalancer IP via ARP)
+rke2_cilium_values:
+  l2announcements:
+    enabled: true
+    leaseDuration: 15s
+    leaseRenewDeadline: 5s
+    leaseRetryPeriod: 2s
+  externalIPs:
+    enabled: true
+  k8sServiceHost: 192.168.1.132
+  k8sServicePort: 6443
+  kubeProxyReplacement: true
