@@ -6,3 +6,4 @@
 *.hcl    text eol=lf
 *.tf     text eol=lf
 Makefile text eol=lf
+*.md     text eol=lf
