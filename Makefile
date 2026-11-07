@@ -1,10 +1,11 @@
 # ==============================================================================
 # Point d'entrée opérateur — mêmes cibles que les anciens repos datacenter-kubernetes-*,
-# avec CLUSTER=rancher|payload pour choisir le cluster.
+# avec CLUSTER=rancher|payload|standalone pour choisir le cluster.
 #   make help
 #   make infra-apply  CLUSTER=payload
 #   make rke2-install CLUSTER=payload
 #   make fluxcd-apply CLUSTER=payload
+#   make infra-apply  CLUSTER=standalone   (VMs isolées : infra-* uniquement)
 # ==============================================================================
 
 SHELL := /bin/bash
@@ -31,7 +32,7 @@ export TG_PROVIDER_CACHE ?= 1
 # répertoire courant. Un chemin explicite est, lui, toujours pris en compte.
 export ANSIBLE_CONFIG := $(CURDIR)/$(RKE2_DIR)/ansible.cfg
 
-.PHONY: help check-cluster check-rke2 \
+.PHONY: help check-cluster check-rke2 check-fluxcd \
         template infra-init infra-plan infra-apply infra-destroy \
         rke2-deps rke2-install rke2-uninstall rke2-update rke2-reboot rke2-maintenance \
         rke2-longhorn-prereqs rke2-backup rke2-restore \
@@ -51,6 +52,9 @@ check-cluster:
 
 check-rke2: check-cluster
 	@test -d $(RKE2_DIR) || { echo "Dossier Ansible absent : $(RKE2_DIR)"; exit 1; }
+
+check-fluxcd: check-cluster
+	@test -d $(FLUXCD_DIR) || { echo "Unité FluxCD absente : $(FLUXCD_DIR)"; exit 1; }
 
 # ==============================================================================
 # 0. TEMPLATE - Terragrunt (partagé par tous les clusters)
@@ -112,16 +116,16 @@ rke2-restore: check-rke2 ## Restaurer depuis un snapshot (SNAPSHOT=nom-du-snapsh
 # 3. FLUXCD - Terragrunt (GitOps) — lit $(RKE2_DIR)/kubeconfig.yaml
 # ==============================================================================
 
-fluxcd-init: check-cluster ## Initialiser l'unité fluxcd
+fluxcd-init: check-fluxcd ## Initialiser l'unité fluxcd
 	cd $(FLUXCD_DIR) && $(TG) init -upgrade
 
-fluxcd-plan: check-cluster ## Planifier le bootstrap FluxCD
+fluxcd-plan: check-fluxcd ## Planifier le bootstrap FluxCD
 	cd $(FLUXCD_DIR) && $(TG) plan
 
-fluxcd-apply: check-cluster ## Bootstrapper FluxCD sur le cluster
+fluxcd-apply: check-fluxcd ## Bootstrapper FluxCD sur le cluster
 	cd $(FLUXCD_DIR) && $(TG) apply
 
-fluxcd-destroy: check-cluster ## Supprimer FluxCD du cluster
+fluxcd-destroy: check-fluxcd ## Supprimer FluxCD du cluster
 	cd $(FLUXCD_DIR) && $(TG) destroy
 
 # ==============================================================================
