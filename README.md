@@ -24,15 +24,21 @@ live/shared/proxmox-template                 (Terragrunt — template Rocky 9, I
         │         └─► rancher/rke2           (Ansible   — RKE2, kubeconfig.yaml)
         │                └─► rancher/fluxcd  (Terragrunt — lit ../rke2/kubeconfig.yaml)
         │
-        └──► production/payload/vms          (Terragrunt — 6 VMs .113-.118)
-                  └─► payload/rke2           (Ansible)
-                         └─► payload/fluxcd  (Terragrunt)
+        ├──► production/payload/vms          (Terragrunt — 6 VMs .113-.118)
+        │         └─► payload/rke2           (Ansible)
+        │                └─► payload/fluxcd  (Terragrunt)
+        │
+        └──► production/standalone/vms       (Terragrunt — VMs isolées, .120)
 ```
 
 | Cluster | Rôle                  | Nœuds                        | VIP API       | Repo GitOps             |
 |---------|-----------------------|------------------------------|---------------|-------------------------|
 | rancher | Rancher Manager       | 3 servers                    | 192.168.1.130 | `rancher-gitops-fluxcd` |
 | payload | Workloads applicatifs | 3 servers + 3 agents         | 192.168.1.132 | `payload-gitops-fluxcd` |
+
+`standalone` n'est pas un cluster : il regroupe des VMs isolées (`standalone-1`,
+8 vCPU / 16 Go / 200 Go, `192.168.1.120`), sans RKE2 ni Flux. Il réutilise l'unité
+`vms/` ; `role = "server"` y sert seulement à satisfaire la validation du module.
 
 ---
 
@@ -59,7 +65,8 @@ terragrunt_cluster_kubernetes/
 │   │   │   ├── vms/terragrunt.hcl
 │   │   │   ├── rke2/            # ← copie exacte de datacenter-kubernetes-rancher/modules/rke2
 │   │   │   └── fluxcd/terragrunt.hcl
-│   │   └── payload/             # idem (rke2/ = copie de datacenter-kubernetes-payload/modules/rke2)
+│   │   ├── payload/             # idem (rke2/ = copie de datacenter-kubernetes-payload/modules/rke2)
+│   │   └── standalone/          # VMs isolées : cluster.hcl + vms/ uniquement
 │   └── staging/                 # enabled = false
 ├── scripts/migrate-legacy-state.sh
 ├── Makefile                     # mêmes cibles que les anciens repos + CLUSTER=
@@ -167,6 +174,9 @@ make rke2-install CLUSTER=payload
 make fluxcd-apply CLUSTER=payload
 make ca-export ca-distribute CLUSTER=payload
 ```
+
+VMs isolées : `make infra-plan|infra-apply|infra-destroy CLUSTER=standalone`
+(les cibles `rke2-*` et `fluxcd-*` ne s'appliquent pas).
 
 Toutes les cibles `rke2-*` et `ca-*` lancent les mêmes commandes qu'avant dans
 `live/<env>/<cluster>/rke2/` (`ENV=production|staging` choisit `inventory-$(ENV).yml`).

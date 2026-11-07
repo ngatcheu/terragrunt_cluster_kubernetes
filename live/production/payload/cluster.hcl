@@ -18,9 +18,9 @@ locals {
     "payload-master-1" = { role = "server", vm_id = 113, ip_address = "192.168.1.113/24", cpu_cores = 4, memory = 4096, disk_size = 60, datastore = "vms-ssd" }
     "payload-master-2" = { role = "server", vm_id = 114, ip_address = "192.168.1.114/24", cpu_cores = 4, memory = 4096, disk_size = 60, datastore = "vms-ssd" }
     "payload-master-3" = { role = "server", vm_id = 115, ip_address = "192.168.1.115/24", cpu_cores = 4, memory = 4096, disk_size = 60, datastore = "vms-ssd" }
-    "payload-worker-1" = { role = "agent", vm_id = 116, ip_address = "192.168.1.116/24", cpu_cores = 4, memory = 12288, disk_size = 200, datastore = "vms-raid" }
-    "payload-worker-2" = { role = "agent", vm_id = 117, ip_address = "192.168.1.117/24", cpu_cores = 4, memory = 12288, disk_size = 200, datastore = "vms-raid" }
-    "payload-worker-3" = { role = "agent", vm_id = 118, ip_address = "192.168.1.118/24", cpu_cores = 4, memory = 12288, disk_size = 200, datastore = "vms-raid" }
+    "payload-worker-1" = { role = "agent", vm_id = 116, ip_address = "192.168.1.116/24", cpu_cores = 4, memory = 8192, disk_size = 200, datastore = "vms-raid" }
+    "payload-worker-2" = { role = "agent", vm_id = 117, ip_address = "192.168.1.117/24", cpu_cores = 4, memory = 8192, disk_size = 200, datastore = "vms-raid" }
+    "payload-worker-3" = { role = "agent", vm_id = 118, ip_address = "192.168.1.118/24", cpu_cores = 4, memory = 8192, disk_size = 200, datastore = "vms-raid" }
   }
 
   # ----- FluxCD -----
